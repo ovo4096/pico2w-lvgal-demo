@@ -8,6 +8,7 @@
 #include "hardware/dma.h"
 #include "lvgl.h"
 #include "src/drivers/display/st7796/lv_st7796.h"
+#include "src/drivers/display/lcd/lv_lcd_generic_mipi.h"
 #include "demos/lv_demos.h"
 #include "ft6336u.h"
 
@@ -16,8 +17,8 @@
  *===========================================*/
 
 /* Display resolution - adjust according to your display */
-#define DISP_HOR_RES    320
-#define DISP_VER_RES    480
+#define DISP_HOR_RES    480
+#define DISP_VER_RES    320
 
 /* SPI Configuration */
 #define SPI_PORT        spi0
@@ -45,16 +46,16 @@
 #define PIN_TOUCH_INT       5    /* Touch interrupt pin (optional, -1 if not used) */
 
 /* Touch screen orientation settings */
-#define TOUCH_SWAP_XY       false  /* Swap X and Y axes */
-#define TOUCH_INVERT_X      false  /* Invert X axis */
+#define TOUCH_SWAP_XY       true   /* Swap X and Y axes for landscape */
+#define TOUCH_INVERT_X      true   /* Invert X axis for landscape */
 #define TOUCH_INVERT_Y      false  /* Invert Y axis */
 
 /* FT6336U device handle */
 static ft6336u_t touch_dev;
 
 /* Display buffer - Half screen double buffering */
-/* 320 x 240 x 2 bytes = 153,600 bytes (150KB) per buffer */
-#define DISP_BUF_LINES  240  /* Half screen */
+/* 480 x 160 x 2 bytes = 153,600 bytes (150KB) per buffer */
+#define DISP_BUF_LINES  160  /* Half screen */
 #define DISP_BUF_SIZE   (DISP_HOR_RES * DISP_BUF_LINES)
 static uint8_t disp_buf1[DISP_BUF_SIZE * 2] __attribute__((aligned(4)));  /* RGB565 buffer 1 */
 static uint8_t disp_buf2[DISP_BUF_SIZE * 2] __attribute__((aligned(4)));  /* RGB565 buffer 2 */
@@ -317,6 +318,9 @@ int main(void)
         lcd_send_cmd, 
         lcd_send_color
     );
+    
+    /* Set landscape mode: swap X/Y axes and adjust mirroring */
+    lv_lcd_generic_mipi_set_address_mode(disp, false, true, true, true);
     
     /* Set display buffer - double buffering for async DMA transfer */
     lv_display_set_buffers(disp, disp_buf1, disp_buf2, sizeof(disp_buf1), LV_DISPLAY_RENDER_MODE_PARTIAL);
