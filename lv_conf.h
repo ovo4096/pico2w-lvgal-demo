@@ -32,8 +32,8 @@
 #define LV_STDARG_INCLUDE       <stdarg.h>
 
 /** Size of memory available for `lv_malloc()` in bytes (>= 2kB)
- *  Pico has limited RAM, so we use 32KB for LVGL */
-#define LV_MEM_SIZE (32 * 1024U)
+ *  Increased to 128KB for benchmark demo (recommended minimum) */
+#define LV_MEM_SIZE (128 * 1024U)
 
 /** Size of the memory expand for `lv_malloc()` in bytes */
 #define LV_MEM_POOL_EXPAND_SIZE 0
@@ -46,7 +46,7 @@
  *====================*/
 
 /** Default display refresh, input device read and animation step period. */
-#define LV_DEF_REFR_PERIOD  33      /**< [ms] */
+#define LV_DEF_REFR_PERIOD  10      /**< [ms] - 100 FPS max */
 
 /** Default Dots Per Inch. */
 #define LV_DPI_DEF 130
@@ -79,8 +79,8 @@
     #define LV_DRAW_SW_SUPPORT_RGB565A8         0
     #define LV_DRAW_SW_SUPPORT_RGB888           0
     #define LV_DRAW_SW_SUPPORT_XRGB8888         0
-    #define LV_DRAW_SW_SUPPORT_ARGB8888         0
-    #define LV_DRAW_SW_SUPPORT_ARGB8888_PREMULTIPLIED 0
+    #define LV_DRAW_SW_SUPPORT_ARGB8888         1
+    #define LV_DRAW_SW_SUPPORT_ARGB8888_PREMULTIPLIED 1
     #define LV_DRAW_SW_SUPPORT_L8               1
     #define LV_DRAW_SW_SUPPORT_AL88             0
     #define LV_DRAW_SW_SUPPORT_A8               1
@@ -214,10 +214,10 @@
 #define LV_FONT_MONTSERRAT_14   1
 #define LV_FONT_MONTSERRAT_16   0
 #define LV_FONT_MONTSERRAT_18   0
-#define LV_FONT_MONTSERRAT_20   0
+#define LV_FONT_MONTSERRAT_20   1
 #define LV_FONT_MONTSERRAT_22   0
-#define LV_FONT_MONTSERRAT_24   0
-#define LV_FONT_MONTSERRAT_26   0
+#define LV_FONT_MONTSERRAT_24   1
+#define LV_FONT_MONTSERRAT_26   1
 #define LV_FONT_MONTSERRAT_28   0
 #define LV_FONT_MONTSERRAT_30   0
 #define LV_FONT_MONTSERRAT_32   0
@@ -277,33 +277,33 @@
 #define LV_USE_BAR          1
 #define LV_USE_BUTTON       1
 #define LV_USE_BUTTONMATRIX 1
-#define LV_USE_CALENDAR     0
-#define LV_USE_CANVAS       0
-#define LV_USE_CHART        0
+#define LV_USE_CALENDAR     1
+#define LV_USE_CANVAS       1
+#define LV_USE_CHART        1
 #define LV_USE_CHECKBOX     1
 #define LV_USE_DROPDOWN     1
 #define LV_USE_IMAGE        1
-#define LV_USE_IMAGEBUTTON  0
-#define LV_USE_KEYBOARD     0
+#define LV_USE_IMAGEBUTTON  1
+#define LV_USE_KEYBOARD     1
 #define LV_USE_LABEL        1
-#define LV_USE_LED          0
+#define LV_USE_LED          1
 #define LV_USE_LINE         1
-#define LV_USE_LIST         0
+#define LV_USE_LIST         1
 #define LV_USE_LOTTIE       0
-#define LV_USE_MENU         0
-#define LV_USE_MSGBOX       0
+#define LV_USE_MENU         1
+#define LV_USE_MSGBOX       1
 #define LV_USE_ROLLER       1
-#define LV_USE_SCALE        0
+#define LV_USE_SCALE        1
 #define LV_USE_SLIDER       1
-#define LV_USE_SPAN         0
-#define LV_USE_SPINBOX      0
+#define LV_USE_SPAN         1
+#define LV_USE_SPINBOX      1
 #define LV_USE_SPINNER      1
 #define LV_USE_SWITCH       1
-#define LV_USE_TABLE        0
-#define LV_USE_TABVIEW      0
-#define LV_USE_TEXTAREA     0
-#define LV_USE_TILEVIEW     0
-#define LV_USE_WIN          0
+#define LV_USE_TABLE        1
+#define LV_USE_TABVIEW      1
+#define LV_USE_TEXTAREA     1
+#define LV_USE_TILEVIEW     1
+#define LV_USE_WIN          1
 
 /*==================
  * THEMES
@@ -380,12 +380,29 @@
 #define LV_USE_GENERIC_MIPI     1
 
 /*==================
+ * SYSMON (Performance Monitor)
+ *==================*/
+
+#define LV_USE_SYSMON           1
+#if LV_USE_SYSMON
+    /** Show CPU usage and FPS count */
+    #define LV_USE_PERF_MONITOR 1
+    #if LV_USE_PERF_MONITOR
+        #define LV_USE_PERF_MONITOR_POS LV_ALIGN_BOTTOM_RIGHT
+        #define LV_USE_PERF_MONITOR_LOG_MODE 0
+    #endif
+
+    /** Show used memory and memory fragmentation */
+    #define LV_USE_MEM_MONITOR 0
+#endif
+
+/*==================
  * DEMOS
  *==================*/
 
-#define LV_USE_DEMO_WIDGETS         0
+#define LV_USE_DEMO_WIDGETS         1
 #define LV_USE_DEMO_KEYPAD_AND_ENCODER 0
-#define LV_USE_DEMO_BENCHMARK       0
+#define LV_USE_DEMO_BENCHMARK       1
 #define LV_USE_DEMO_RENDER          0
 #define LV_USE_DEMO_STRESS          0
 #define LV_USE_DEMO_MUSIC           0

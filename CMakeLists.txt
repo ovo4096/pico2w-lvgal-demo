@@ -28,7 +28,7 @@ set(PICO_BOARD pico2_w CACHE STRING "Board type")
 # Pull in Raspberry Pi Pico SDK (must be before project)
 include(pico_sdk_import.cmake)
 
-project(TFT_eSPI_test2 C CXX ASM)
+project(pico2w-lvgl-demo C CXX ASM)
 
 # Initialise the Raspberry Pi Pico SDK
 pico_sdk_init()
@@ -37,8 +37,8 @@ pico_sdk_init()
 # Set LVGL configuration path
 set(LV_CONF_PATH ${CMAKE_CURRENT_SOURCE_DIR}/lv_conf.h CACHE STRING "" FORCE)
 
-# Disable demos and examples for embedded use
-set(CONFIG_LV_BUILD_DEMOS OFF CACHE BOOL "" FORCE)
+# Enable demos (benchmark) and disable examples
+set(CONFIG_LV_BUILD_DEMOS ON CACHE BOOL "" FORCE)
 set(CONFIG_LV_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 
 # Add LVGL as a subdirectory
@@ -52,28 +52,30 @@ set_target_properties(lvgl PROPERTIES SOURCES "${LVGL_SOURCES}")
 # ==================== Main Application ====================
 # Add executable. Default name is the project name, version 0.1
 
-add_executable(TFT_eSPI_test2 main.c )
+add_executable(pico2w-lvgl-demo main.c ft6336u.c)
 
-pico_set_program_name(TFT_eSPI_test2 "TFT_eSPI_test2")
-pico_set_program_version(TFT_eSPI_test2 "0.1")
+pico_set_program_name(pico2w-lvgl-demo "pico2w-lvgl-demo")
+pico_set_program_version(pico2w-lvgl-demo "0.1")
 
 # Modify the below lines to enable/disable output over UART/USB
-pico_enable_stdio_uart(TFT_eSPI_test2 1)
-pico_enable_stdio_usb(TFT_eSPI_test2 1)
+pico_enable_stdio_uart(pico2w-lvgl-demo 1)
+pico_enable_stdio_usb(pico2w-lvgl-demo 1)
 
 # Add the standard library to the build
-target_link_libraries(TFT_eSPI_test2
+target_link_libraries(pico2w-lvgl-demo
         pico_stdlib
+        pico_multicore
         hardware_spi
+        hardware_i2c
         hardware_gpio
         hardware_dma
         lvgl)
 
 # Add the standard include files to the build
-target_include_directories(TFT_eSPI_test2 PRIVATE
+target_include_directories(pico2w-lvgl-demo PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}
         ${CMAKE_CURRENT_LIST_DIR}/lvgl-9.4.0
 )
 
-pico_add_extra_outputs(TFT_eSPI_test2)
+pico_add_extra_outputs(pico2w-lvgl-demo)
 

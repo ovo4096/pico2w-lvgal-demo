@@ -1,11 +1,15 @@
 #include <stdio.h>
 #include <string.h>
 #include "pico/stdlib.h"
+#include "hardware/clocks.h"
 #include "hardware/spi.h"
+#include "hardware/i2c.h"
 #include "hardware/gpio.h"
 #include "hardware/dma.h"
 #include "lvgl.h"
 #include "src/drivers/display/st7796/lv_st7796.h"
+#include "demos/lv_demos.h"
+#include "ft6336u.h"
 
 /*===========================================
  * ST7796 Display Configuration
@@ -17,7 +21,7 @@
 
 /* SPI Configuration */
 #define SPI_PORT        spi0
-#define SPI_BAUDRATE    (40 * 1000 * 1000)  /* 40 MHz */
+#define SPI_BAUDRATE    (1000 * 1000 * 1000)  /* 75 MHz - maximum for ST7796 */
 
 /* GPIO Pin Configuration - adjust to match your wiring */
 #define PIN_SCK         18   /* SPI Clock */
@@ -28,9 +32,32 @@
 #define PIN_RST         21   /* Reset */
 #define PIN_BL          22   /* Backlight (optional) */
 
-/* Display buffer - partial mode with 10 lines */
-#define DISP_BUF_SIZE   (DISP_HOR_RES * 10)
-static uint8_t disp_buf1[DISP_BUF_SIZE * 2];  /* RGB565 = 2 bytes per pixel */
+/*===========================================
+ * FT6336U Touch Configuration
+ *===========================================*/
+
+/* I2C Configuration for touch controller */
+#define TOUCH_I2C_PORT      i2c1
+#define TOUCH_I2C_BAUDRATE  (400 * 1000)  /* 400 kHz */
+#define PIN_TOUCH_SDA       2    /* I2C SDA - adjust to your wiring */
+#define PIN_TOUCH_SCL       3    /* I2C SCL - adjust to your wiring */
+#define PIN_TOUCH_RST       4    /* Touch reset pin (optional, -1 if not used) */
+#define PIN_TOUCH_INT       5    /* Touch interrupt pin (optional, -1 if not used) */
+
+/* Touch screen orientation settings */
+#define TOUCH_SWAP_XY       false  /* Swap X and Y axes */
+#define TOUCH_INVERT_X      false  /* Invert X axis */
+#define TOUCH_INVERT_Y      false  /* Invert Y axis */
+
+/* FT6336U device handle */
+static ft6336u_t touch_dev;
+
+/* Display buffer - Half screen double buffering */
+/* 320 x 240 x 2 bytes = 153,600 bytes (150KB) per buffer */
+#define DISP_BUF_LINES  240  /* Half screen */
+#define DISP_BUF_SIZE   (DISP_HOR_RES * DISP_BUF_LINES)
+static uint8_t disp_buf1[DISP_BUF_SIZE * 2] __attribute__((aligned(4)));  /* RGB565 buffer 1 */
+static uint8_t disp_buf2[DISP_BUF_SIZE * 2] __attribute__((aligned(4)));  /* RGB565 buffer 2 */
 
 /* DMA channel for SPI transfer */
 static int dma_channel;
@@ -112,7 +139,7 @@ static void lcd_send_cmd(lv_display_t *disp, const uint8_t *cmd, size_t cmd_size
 }
 
 /**
- * Send pixel data to LCD controller (using DMA for async transfer)
+ * Send pixel data to LCD controller (with DMA)
  */
 static void lcd_send_color(lv_display_t *disp, const uint8_t *cmd, size_t cmd_size, 
                            uint8_t *param, size_t param_size)
@@ -122,14 +149,16 @@ static void lcd_send_color(lv_display_t *disp, const uint8_t *cmd, size_t cmd_si
         tight_loop_contents();
     }
     
-    /* Swap bytes for RGB565 - ST7796 expects big-endian but RP2350 is little-endian */
-    uint16_t *pixels = (uint16_t *)param;
-    size_t pixel_count = param_size / 2;
-    for (size_t i = 0; i < pixel_count; i++) {
-        pixels[i] = (pixels[i] >> 8) | (pixels[i] << 8);
-    }
-    
     current_disp = disp;
+    
+    /* Swap bytes for RGB565 using optimized 32-bit operations */
+    uint32_t *pixels32 = (uint32_t *)param;
+    size_t count32 = param_size / 4;
+    for (size_t i = 0; i < count32; i++) {
+        uint32_t v = pixels32[i];
+        /* Swap bytes within each 16-bit word: ABCD -> BADC */
+        pixels32[i] = ((v & 0x00FF00FF) << 8) | ((v & 0xFF00FF00) >> 8);
+    }
     
     cs_select();
     
@@ -141,18 +170,7 @@ static void lcd_send_color(lv_display_t *disp, const uint8_t *cmd, size_t cmd_si
     dc_data();
     dma_transfer_done = false;
     
-    dma_channel_configure(
-        dma_channel,
-        &(dma_channel_config){
-            .ctrl = dma_channel_hw_addr(dma_channel)->ctrl_trig
-        },
-        &spi_get_hw(SPI_PORT)->dr,  /* Destination: SPI data register */
-        param,                       /* Source: pixel data */
-        param_size,                  /* Transfer count */
-        false                        /* Don't start yet */
-    );
-    
-    /* Configure and start DMA */
+    /* Configure and start DMA with 8-bit transfers */
     dma_channel_config cfg = dma_channel_get_default_config(dma_channel);
     channel_config_set_transfer_data_size(&cfg, DMA_SIZE_8);
     channel_config_set_read_increment(&cfg, true);
@@ -160,6 +178,8 @@ static void lcd_send_color(lv_display_t *disp, const uint8_t *cmd, size_t cmd_si
     channel_config_set_dreq(&cfg, spi_get_dreq(SPI_PORT, true));
     
     dma_channel_configure(dma_channel, &cfg, &spi_get_hw(SPI_PORT)->dr, param, param_size, true);
+    
+    /* DMA transfer started - will complete in background via interrupt */
 }
 
 /*===========================================
@@ -176,7 +196,9 @@ static uint32_t lv_tick_cb(void) {
 
 static void hardware_init(void) {
     /* Initialize SPI */
-    spi_init(SPI_PORT, SPI_BAUDRATE);
+    uint actual_baudrate = spi_init(SPI_PORT, SPI_BAUDRATE);
+    printf("SPI baudrate: requested %lu MHz, actual %lu MHz\n", 
+           SPI_BAUDRATE / 1000000, actual_baudrate / 1000000);
     gpio_set_function(PIN_SCK, GPIO_FUNC_SPI);
     gpio_set_function(PIN_MOSI, GPIO_FUNC_SPI);
     gpio_set_function(PIN_MISO, GPIO_FUNC_SPI);
@@ -198,6 +220,29 @@ static void hardware_init(void) {
     gpio_set_dir(PIN_BL, GPIO_OUT);
     gpio_put(PIN_BL, 1);  /* Turn on backlight */
     
+    /* Initialize I2C for touch controller */
+    i2c_init(TOUCH_I2C_PORT, TOUCH_I2C_BAUDRATE);
+    gpio_set_function(PIN_TOUCH_SDA, GPIO_FUNC_I2C);
+    gpio_set_function(PIN_TOUCH_SCL, GPIO_FUNC_I2C);
+    gpio_pull_up(PIN_TOUCH_SDA);
+    gpio_pull_up(PIN_TOUCH_SCL);
+    
+    /* Initialize touch reset pin if used */
+    #if PIN_TOUCH_RST >= 0
+    gpio_init(PIN_TOUCH_RST);
+    gpio_set_dir(PIN_TOUCH_RST, GPIO_OUT);
+    gpio_put(PIN_TOUCH_RST, 0);
+    sleep_ms(10);
+    gpio_put(PIN_TOUCH_RST, 1);
+    sleep_ms(100);
+    #endif
+    
+    /* Initialize touch interrupt pin if used */
+    #if PIN_TOUCH_INT >= 0
+    gpio_init(PIN_TOUCH_INT);
+    gpio_set_dir(PIN_TOUCH_INT, GPIO_IN);
+    #endif
+    
     /* Initialize DMA */
     dma_channel = dma_claim_unused_channel(true);
     dma_channel_set_irq0_enabled(dma_channel, true);
@@ -209,6 +254,44 @@ static void hardware_init(void) {
 }
 
 /*===========================================
+ * Touch Input Callback for LVGL
+ *===========================================*/
+
+static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
+{
+    (void)indev;  /* Unused parameter */
+    
+    uint16_t x, y;
+    
+    if (ft6336u_read_touch(&touch_dev, &x, &y)) {
+        data->point.x = x;
+        data->point.y = y;
+        data->state = LV_INDEV_STATE_PRESSED;
+    } else {
+        data->state = LV_INDEV_STATE_RELEASED;
+    }
+}
+
+/*===========================================
+ * Touch Controller Initialization
+ *===========================================*/
+
+static bool touch_init(void)
+{
+    ft6336u_config_t config = {
+        .i2c = TOUCH_I2C_PORT,
+        .addr = FT6336U_I2C_ADDR,
+        .max_x = DISP_HOR_RES,
+        .max_y = DISP_VER_RES,
+        .swap_xy = TOUCH_SWAP_XY,
+        .invert_x = TOUCH_INVERT_X,
+        .invert_y = TOUCH_INVERT_Y,
+    };
+    
+    return ft6336u_init(&touch_dev, &config);
+}
+
+/*===========================================
  * Main Function
  *===========================================*/
 
@@ -216,6 +299,7 @@ int main(void)
 {
     stdio_init_all();
     
+    printf("System clock: %lu MHz\n", clock_get_hz(clk_sys) / 1000000);
     printf("Initializing hardware...\n");
     hardware_init();
     
@@ -225,140 +309,41 @@ int main(void)
     
     printf("Creating ST7796 display...\n");
     
-    /* Create ST7796 display
-     * Color flags to try if colors are wrong:
-     * - LV_LCD_FLAG_NONE        : RGB order
-     * - LV_LCD_FLAG_BGR         : BGR order  
-     * - LV_LCD_FLAG_MIRROR_X    : Mirror horizontally
-     * - LV_LCD_FLAG_MIRROR_Y    : Mirror vertically
-     * You can combine flags with | operator
-     */
+    /* Create ST7796 display */
     lv_display_t *disp = lv_st7796_create(
         DISP_HOR_RES, 
         DISP_VER_RES, 
-        LV_LCD_FLAG_BGR,           /* BGR order - red and blue swapped */
+        LV_LCD_FLAG_BGR,
         lcd_send_cmd, 
         lcd_send_color
     );
     
-    /* Set color inversion if colors look inverted */
-    // lv_st7796_set_invert(disp, true);
+    /* Set display buffer - double buffering for async DMA transfer */
+    lv_display_set_buffers(disp, disp_buf1, disp_buf2, sizeof(disp_buf1), LV_DISPLAY_RENDER_MODE_PARTIAL);
     
-    /* Set display buffer */
-    lv_display_set_buffers(disp, disp_buf1, NULL, sizeof(disp_buf1), LV_DISPLAY_RENDER_MODE_PARTIAL);
+    /* Initialize touch controller */
+    printf("Initializing FT6336U touch controller...\n");
+    if (touch_init()) {
+        /* Create LVGL input device for touch */
+        lv_indev_t *indev = lv_indev_create();
+        lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
+        lv_indev_set_read_cb(indev, touch_read_cb);
+        lv_indev_set_display(indev, disp);
+        printf("Touch controller initialized!\n");
+    } else {
+        printf("Warning: Touch controller initialization failed!\n");
+    }
     
-    /* If your display is rotated, you can set rotation here:
-     * lv_display_set_rotation(disp, LV_DISPLAY_ROTATION_90);
-     */
+    printf("Starting LVGL Benchmark Demo (Single Core)...\n");
     
-    printf("Creating UI...\n");
-    
-    lv_obj_t *scr = lv_screen_active();
-    
-    /* Set black background */
-    lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
-    
-    /* ====== RGB Color Test Blocks (left top corner) ====== */
-    #define COLOR_BLOCK_SIZE 50
-    
-    /* Red block */
-    lv_obj_t *red_block = lv_obj_create(scr);
-    lv_obj_set_size(red_block, COLOR_BLOCK_SIZE, COLOR_BLOCK_SIZE);
-    lv_obj_set_pos(red_block, 10, 10);
-    lv_obj_set_style_bg_color(red_block, lv_color_make(255, 0, 0), 0);
-    lv_obj_set_style_border_width(red_block, 0, 0);
-    lv_obj_set_style_radius(red_block, 0, 0);
-    
-    /* Green block */
-    lv_obj_t *green_block = lv_obj_create(scr);
-    lv_obj_set_size(green_block, COLOR_BLOCK_SIZE, COLOR_BLOCK_SIZE);
-    lv_obj_set_pos(green_block, 10 + COLOR_BLOCK_SIZE + 5, 10);
-    lv_obj_set_style_bg_color(green_block, lv_color_make(0, 255, 0), 0);
-    lv_obj_set_style_border_width(green_block, 0, 0);
-    lv_obj_set_style_radius(green_block, 0, 0);
-    
-    /* Blue block */
-    lv_obj_t *blue_block = lv_obj_create(scr);
-    lv_obj_set_size(blue_block, COLOR_BLOCK_SIZE, COLOR_BLOCK_SIZE);
-    lv_obj_set_pos(blue_block, 10 + (COLOR_BLOCK_SIZE + 5) * 2, 10);
-    lv_obj_set_style_bg_color(blue_block, lv_color_make(0, 0, 255), 0);
-    lv_obj_set_style_border_width(blue_block, 0, 0);
-    lv_obj_set_style_radius(blue_block, 0, 0);
-    
-    /* Labels under color blocks */
-    lv_obj_t *red_label = lv_label_create(scr);
-    lv_label_set_text(red_label, "R");
-    lv_obj_set_style_text_color(red_label, lv_color_white(), 0);
-    lv_obj_align_to(red_label, red_block, LV_ALIGN_OUT_BOTTOM_MID, 0, 2);
-    
-    lv_obj_t *green_label = lv_label_create(scr);
-    lv_label_set_text(green_label, "G");
-    lv_obj_set_style_text_color(green_label, lv_color_white(), 0);
-    lv_obj_align_to(green_label, green_block, LV_ALIGN_OUT_BOTTOM_MID, 0, 2);
-    
-    lv_obj_t *blue_label = lv_label_create(scr);
-    lv_label_set_text(blue_label, "B");
-    lv_obj_set_style_text_color(blue_label, lv_color_white(), 0);
-    lv_obj_align_to(blue_label, blue_block, LV_ALIGN_OUT_BOTTOM_MID, 0, 2);
-    
-    /* ====== Draw red border (1 pixel) ====== */
-    
-    /* Top border */
-    static lv_point_precise_t top_points[] = {{0, 0}, {DISP_HOR_RES - 1, 0}};
-    lv_obj_t *top_line = lv_line_create(scr);
-    lv_line_set_points(top_line, top_points, 2);
-    lv_obj_set_style_line_color(top_line, lv_color_make(255, 0, 0), 0);
-    lv_obj_set_style_line_width(top_line, 1, 0);
-    
-    /* Bottom border */
-    static lv_point_precise_t bottom_points[] = {{0, DISP_VER_RES - 1}, {DISP_HOR_RES - 1, DISP_VER_RES - 1}};
-    lv_obj_t *bottom_line = lv_line_create(scr);
-    lv_line_set_points(bottom_line, bottom_points, 2);
-    lv_obj_set_style_line_color(bottom_line, lv_color_make(255, 0, 0), 0);
-    lv_obj_set_style_line_width(bottom_line, 1, 0);
-    
-    /* Left border */
-    static lv_point_precise_t left_points[] = {{0, 0}, {0, DISP_VER_RES - 1}};
-    lv_obj_t *left_line = lv_line_create(scr);
-    lv_line_set_points(left_line, left_points, 2);
-    lv_obj_set_style_line_color(left_line, lv_color_make(255, 0, 0), 0);
-    lv_obj_set_style_line_width(left_line, 1, 0);
-    
-    /* Right border */
-    static lv_point_precise_t right_points[] = {{DISP_HOR_RES - 1, 0}, {DISP_HOR_RES - 1, DISP_VER_RES - 1}};
-    lv_obj_t *right_line = lv_line_create(scr);
-    lv_line_set_points(right_line, right_points, 2);
-    lv_obj_set_style_line_color(right_line, lv_color_make(255, 0, 0), 0);
-    lv_obj_set_style_line_width(right_line, 1, 0);
-    
-    /* ====== Draw diagonal lines ====== */
-    
-    /* Diagonal: top-left to bottom-right */
-    static lv_point_precise_t diag1_points[] = {{0, 0}, {DISP_HOR_RES - 1, DISP_VER_RES - 1}};
-    lv_obj_t *diag1_line = lv_line_create(scr);
-    lv_line_set_points(diag1_line, diag1_points, 2);
-    lv_obj_set_style_line_color(diag1_line, lv_color_make(255, 0, 0), 0);
-    lv_obj_set_style_line_width(diag1_line, 1, 0);
-    
-    /* Diagonal: top-right to bottom-left */
-    static lv_point_precise_t diag2_points[] = {{DISP_HOR_RES - 1, 0}, {0, DISP_VER_RES - 1}};
-    lv_obj_t *diag2_line = lv_line_create(scr);
-    lv_line_set_points(diag2_line, diag2_points, 2);
-    lv_obj_set_style_line_color(diag2_line, lv_color_make(255, 0, 0), 0);
-    lv_obj_set_style_line_width(diag2_line, 1, 0);
-    
-    /* ====== Center label ====== */
-    lv_obj_t *label = lv_label_create(scr);
-    lv_label_set_text(label, "320x480");
-    lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(label, lv_color_white(), 0);
-    lv_obj_align(label, LV_ALIGN_CENTER, 0, 0);
+    /* Run the benchmark demo */
+    lv_demo_benchmark();
     
     printf("LVGL initialized! Entering main loop...\n");
 
     while (true) {
         lv_timer_handler();
-        sleep_ms(5);
+        /* No delay - run as fast as possible */
     }
     
     return 0;
