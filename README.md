@@ -1,147 +1,133 @@
-# pico2w-lvgl-demo
+# Pico 2W LVGL Demo
 
-基于 Raspberry Pi Pico 2 W 和 LVGL 9.4.0 的 ST7796 TFT 显示屏驱动项目，集成 FT6336U 电容触摸屏。
+一个在 Raspberry Pi Pico 2 W 上运行 LVGL 图形库的演示项目。使用 ST7796 显示屏和 FT6336U 电容触摸屏，经过深度优化以获得流畅的显示效果。
 
-## 性能优化
+## ✨ 特性
 
-本项目针对 RP2350 平台进行了多项 FPS 优化：
+- 🚀 针对 RP2350 深度优化，帧率高达 30+ FPS
+- 🖥️ 支持 320×480 分辨率的 ST7796 显示屏
+- 👆 集成 FT6336U 电容触摸，支持双点触控
+- 🔄 DMA 异步传输，CPU 占用低
+- 📦 开箱即用，配置简单
 
-### 1. 高速 SPI 传输
-```c
-#define SPI_BAUDRATE    (1000 * 1000 * 1000)  // 请求 1GHz，实际约 75MHz
-```
-- RP2350 的 SPI 外设会自动限制到最大支持速率
-- 相比默认 40MHz 提升约 87.5%
+## 🛒 硬件清单
 
-### 2. DMA 异步传输
-- 使用 DMA 进行像素数据传输，CPU 无需等待 SPI 完成
-- 在 DMA 传输期间 CPU 可执行其他渲染任务
-- 通过中断通知 LVGL 刷新完成，实现真正的异步操作
+| 组件 | 规格 | 购买链接 |
+|------|------|----------|
+| 开发板 | Raspberry Pi Pico 2 W | - |
+| 显示屏 | 3.5寸 ST7796 SPI TFT (320×480) | [淘宝](https://item.taobao.com/item.htm?id=758704987574) |
+| 触摸屏 | FT6336U 电容触摸 (屏幕自带) | 同上 |
 
-### 3. 双缓冲机制
-```c
-#define DISP_BUF_LINES  240  // 半屏缓冲
-static uint8_t disp_buf1[DISP_BUF_SIZE * 2];  // 150KB 缓冲区 1
-static uint8_t disp_buf2[DISP_BUF_SIZE * 2];  // 150KB 缓冲区 2
-```
-- 半屏双缓冲 (320 × 240 × 2 = 150KB × 2)
-- 一个缓冲区 DMA 传输时，另一个缓冲区可同时渲染
-- 显著减少 CPU 等待时间
+## 🔌 接线说明
 
-### 4. 优化的字节交换
-```c
-// 使用 32 位操作一次处理 2 个像素
-uint32_t v = pixels32[i];
-pixels32[i] = ((v & 0x00FF00FF) << 8) | ((v & 0xFF00FF00) >> 8);
-```
-- RGB565 大小端转换使用 32 位操作
-- 一次处理 2 个像素，比逐字节交换快 2 倍
+将显示屏模块与 Pico 2 W 按如下方式连接：
 
-### 5. LVGL 配置优化 (lv_conf.h)
-| 配置项 | 值 | 说明 |
-|--------|-----|------|
-| `LV_DEF_REFR_PERIOD` | 10ms | 100 FPS 刷新率上限 |
-| `LV_MEM_SIZE` | 128KB | 足够大的内存池减少碎片 |
-| `LV_DRAW_BUF_ALIGN` | 4 | 4字节对齐优化内存访问 |
-| `LV_DRAW_SW_SUPPORT_RGB565` | 1 | 原生 RGB565 支持 |
-| `LV_DRAW_SW_SHADOW_CACHE_SIZE` | 0 | 禁用阴影缓存节省内存 |
+**显示屏 (SPI)**
+| 显示屏引脚 | Pico GPIO | 说明 |
+|-----------|-----------|------|
+| SCK | GP18 | SPI 时钟 |
+| MOSI | GP19 | SPI 数据 |
+| CS | GP17 | 片选 |
+| DC | GP20 | 数据/命令 |
+| RST | GP21 | 复位 |
+| BL | GP22 | 背光 |
 
-### 6. 禁用未使用功能
-- 禁用所有 GPU 后端 (PXP, DMA2D, SDL 等)
-- 禁用不需要的颜色格式支持
-- 禁用日志和调试功能
+**触摸屏 (I2C)**
+| 触摸屏引脚 | Pico GPIO | 说明 |
+|-----------|-----------|------|
+| SDA | GP2 | I2C 数据 |
+| SCL | GP3 | I2C 时钟 |
+| RST | GP4 | 复位 (可选) |
+| INT | GP5 | 中断 (可选) |
 
-## 硬件配置
+> 💡 根据实际接线修改 `main.c` 中的引脚定义即可。
 
-### 开发板
-- Raspberry Pi Pico 2 W (RP2350)
+## 🚀 快速开始
 
-### 显示屏
-- ST7796 TFT LCD
-- 分辨率: 320 x 480
-- 颜色深度: RGB565 (16位)
-- 接口: SPI
+### 环境要求
 
-### 触摸屏
-- FT6336U 电容触摸控制器
-- 接口: I2C (400kHz)
-- 支持双点触控
+- [Pico SDK 2.2.0](https://github.com/raspberrypi/pico-sdk)
+- CMake 3.13+
+- Ninja 构建工具
+- VS Code + Raspberry Pi Pico 扩展 (推荐)
 
-### 引脚连接
+### 编译
 
-#### 显示屏 (SPI)
-| 功能 | GPIO | 说明 |
-|------|------|------|
-| SPI SCK | 18 | SPI 时钟 |
-| SPI MOSI | 19 | SPI 数据输出 |
-| SPI MISO | 16 | SPI 数据输入 (未使用) |
-| CS | 17 | 片选 |
-| DC | 20 | 数据/命令选择 |
-| RST | 21 | 复位 |
-| BL | 22 | 背光控制 |
-
-#### 触摸屏 (I2C)
-| 功能 | GPIO | 说明 |
-|------|------|------|
-| I2C SDA | 2 | I2C 数据 |
-| I2C SCL | 3 | I2C 时钟 |
-| RST | 4 | 复位 (可选) |
-| INT | 5 | 中断 (可选) |
-
-## 软件依赖
-
-- Pico SDK 2.2.0
-- LVGL 9.4.0
-
-## 项目结构
-
-```
-pico2w-lvgl-demo/
-├── CMakeLists.txt          # CMake 构建配置
-├── main.c                  # 主程序
-├── ft6336u.c               # FT6336U 触摸驱动
-├── ft6336u.h               # FT6336U 头文件
-├── lv_conf.h               # LVGL 配置文件
-├── pico_sdk_import.cmake   # Pico SDK 导入
-├── lvgl-9.4.0/             # LVGL 库
-└── build/                  # 构建输出目录
-```
-
-## 编译和烧录
-
-### 1. 配置项目
 ```bash
+# 进入构建目录
 cd build
-cmake .. -G Ninja
-```
 
-### 2. 编译
-```bash
+# 配置项目
+cmake .. -G Ninja
+
+# 编译
 ninja
 ```
 
-或使用 VS Code 任务: `Compile Project`
+使用 VS Code？直接运行 `Compile Project` 任务即可。
 
-### 3. 烧录
-使用 VS Code 任务: `Flash`
+### 烧录
 
-或将 `build/pico2w-lvgl-demo.uf2` 拖拽到 Pico 的 USB 存储设备。
+**方法一：拖拽烧录**
+1. 按住 BOOTSEL 按钮连接 Pico
+2. 将 `build/pico2w-lvgl-demo.uf2` 拖入弹出的 USB 驱动器
 
-## 配置说明
+**方法二：调试器烧录**
+运行 VS Code 的 `Flash` 任务（需要 CMSIS-DAP 调试器）
 
-### 显示参数
+## ⚡ 性能优化详解
 
-在 `main.c` 中修改:
+本项目在 RP2350 平台上实现了多项优化，以获得最佳显示性能：
+
+### DMA 异步传输
+
+像素数据通过 DMA 传输到 SPI，CPU 无需等待。当一帧数据在传输时，CPU 可以同时渲染下一帧。
 
 ```c
-#define DISP_HOR_RES    320   // 水平分辨率
-#define DISP_VER_RES    480   // 垂直分辨率
-#define SPI_BAUDRATE    (1000 * 1000 * 1000)  // SPI 速度
+// DMA 传输完成后通过中断通知 LVGL
+static void dma_irq_handler(void) {
+    dma_channel_acknowledge_irq0(dma_channel);
+    lv_display_flush_ready(current_disp);
+}
 ```
 
-### 触摸屏校准
+### 双缓冲机制
 
-如果触摸坐标与显示不匹配，调整以下参数:
+采用半屏双缓冲策略（150KB × 2），在 DMA 传输一个缓冲区时，另一个缓冲区可同时进行渲染，大幅减少等待时间。
+
+### 高速 SPI
+
+SPI 时钟配置为最高速率，RP2350 会自动限制在硬件支持的最大速度（约 75MHz）。
+
+### 快速字节交换
+
+RGB565 大小端转换使用 32 位操作，一次处理两个像素：
+
+```c
+pixels32[i] = ((v & 0x00FF00FF) << 8) | ((v & 0xFF00FF00) >> 8);
+```
+
+### 精简配置
+
+- 禁用未使用的 GPU 后端和颜色格式
+- 关闭日志和调试功能
+- 内存池设置为 128KB 以减少碎片
+
+## ⚙️ 自定义配置
+
+### 调整显示参数
+
+在 `main.c` 中修改分辨率和 SPI 速度：
+
+```c
+#define DISP_HOR_RES    320
+#define DISP_VER_RES    480
+#define SPI_BAUDRATE    (1000 * 1000 * 1000)
+```
+
+### 校准触摸方向
+
+如果触摸坐标与显示不匹配，调整这些参数：
 
 ```c
 #define TOUCH_SWAP_XY       false  // 交换 X/Y 轴
@@ -149,61 +135,54 @@ ninja
 #define TOUCH_INVERT_Y      false  // 反转 Y 轴
 ```
 
-### 颜色设置
+### 修正颜色显示
 
-颜色标志在 `lv_st7796_create()` 中设置:
+颜色顺序不对（红蓝互换）？修改颜色标志：
 
 ```c
-lv_display_t *disp = lv_st7796_create(
-    DISP_HOR_RES, 
-    DISP_VER_RES, 
-    LV_LCD_FLAG_BGR,    // 颜色顺序
-    lcd_send_cmd, 
-    lcd_send_color
-);
+lv_st7796_create(..., LV_LCD_FLAG_BGR, ...);  // 或 LV_LCD_FLAG_NONE
 ```
 
-可用标志:
-- `LV_LCD_FLAG_NONE` - RGB 顺序
-- `LV_LCD_FLAG_BGR` - BGR 顺序 (红蓝交换)
-- `LV_LCD_FLAG_MIRROR_X` - 水平镜像
-- `LV_LCD_FLAG_MIRROR_Y` - 垂直镜像
-
-可以使用 `|` 组合多个标志。
-
-### 颜色反转
-
-如果颜色显示为负片效果:
+颜色像负片一样反了？启用颜色反转：
 
 ```c
 lv_st7796_set_invert(disp, true);
 ```
 
-### 屏幕旋转
+### 旋转屏幕
 
 ```c
-lv_display_set_rotation(disp, LV_DISPLAY_ROTATION_90);  // 旋转 90°
+lv_display_set_rotation(disp, LV_DISPLAY_ROTATION_90);
 ```
 
-## 常见问题
+可选值：`0`、`90`、`180`、`270`
 
-### 1. 颜色不正确 (红蓝互换)
-将 `LV_LCD_FLAG_NONE` 改为 `LV_LCD_FLAG_BGR` 或反之。
+## 📁 项目结构
 
-### 2. 显示为负片
-启用颜色反转: `lv_st7796_set_invert(disp, true);`
+```
+pico2w-lvgl-demo/
+├── main.c                  # 主程序：显示和触摸初始化
+├── ft6336u.c/h             # FT6336U 触摸屏驱动
+├── lv_conf.h               # LVGL 配置
+├── CMakeLists.txt          # 构建配置
+├── lvgl-9.4.0/             # LVGL 图形库
+└── build/                  # 构建输出
+```
 
-### 3. 显示方向不对
-使用 `lv_display_set_rotation()` 或组合 `LV_LCD_FLAG_MIRROR_X/Y` 标志。
+## ❓ 常见问题
 
-### 4. 编译时 Helium 汇编错误
-项目已在 CMakeLists.txt 中过滤掉不兼容的 Helium 汇编文件。
+**Q: 编译报 Helium 汇编错误？**  
+A: 项目已自动过滤不兼容的 Helium 文件，确保使用最新的 CMakeLists.txt。
 
-### 5. 触摸屏无响应
-- 检查 I2C 引脚接线
-- 确认 I2C 地址为 0x38
-- 查看串口输出确认初始化状态
+**Q: 触摸屏没反应？**  
+A: 检查 I2C 接线，确认地址为 0x38。可通过串口查看初始化日志。
 
-## 许可证
+**Q: 显示白屏？**  
+A: 检查 SPI 接线，确认 RST 和 BL 引脚正确连接。
+
+**Q: 帧率不够高？**  
+A: 确认使用了双缓冲和 DMA 传输。可在 `lv_conf.h` 中调整 `LV_MEM_SIZE`。
+
+## 📄 许可证
 
 MIT License
